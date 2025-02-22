@@ -2,71 +2,57 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>2D Hydrodynamic Simulation</title>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/konva/konva.min.js"></script>
-  <script src="https://unpkg.com/react-konva/dist/react-konva.min.js"></script>
-  <script src="https://unpkg.com/simplex-noise/simplex-noise.min.js"></script>
+  <title>Simple 2D Fluid Simulation</title>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/javascript">
-    const { useEffect, useState } = React;
-    const { Stage, Layer, Rect } = ReactKonva;
-    const noise2D = new SimplexNoise().noise2D;
-    const WIDTH = 800;
-    const HEIGHT = 600;
+  <canvas id="simulation" width="800" height="600"></canvas>
+  <script>
+    const canvas = document.getElementById('simulation');
+    const ctx = canvas.getContext('2d');
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
     const GRID_SIZE = 100;
 
-    const createInitialGrid = () => {
+    const createGrid = () => {
       const grid = [];
       for (let x = 0; x < GRID_SIZE; x++) {
         grid[x] = [];
         for (let y = 0; y < GRID_SIZE; y++) {
-          grid[x][y] = noise2D(x / 10, y / 10) * 255;
+          grid[x][y] = Math.random() * 255;
         }
       }
       return grid;
     };
 
-    const HydrodynamicSimulation = () => {
-      const [grid, setGrid] = useState(createInitialGrid());
+    let grid = createGrid();
 
-      useEffect(() => {
-        const interval = setInterval(() => {
-          setGrid((prevGrid) =>
-            prevGrid.map((row, x) =>
-              row.map((val, y) => val + (Math.random() - 0.5) * 10)
-            )
-          );
-        }, 100);
-        return () => clearInterval(interval);
-      }, []);
-
-      return React.createElement(
-        Stage,
-        { width: WIDTH, height: HEIGHT },
-        React.createElement(
-          Layer,
-          null,
-          grid.flatMap((row, x) =>
-            row.map((val, y) =>
-              React.createElement(Rect, {
-                key: `${x}-${y}`,
-                x: (x / GRID_SIZE) * WIDTH,
-                y: (y / GRID_SIZE) * HEIGHT,
-                width: WIDTH / GRID_SIZE,
-                height: HEIGHT / GRID_SIZE,
-                fill: `rgb(${val},${val},255)`
-              })
-            )
-          )
-        )
-      );
+    const drawGrid = () => {
+      const cellWidth = WIDTH / GRID_SIZE;
+      const cellHeight = HEIGHT / GRID_SIZE;
+      for (let x = 0; x < GRID_SIZE; x++) {
+        for (let y = 0; y < GRID_SIZE; y++) {
+          const val = grid[x][y];
+          ctx.fillStyle = `rgb(${val},${val},255)`;
+          ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
+        }
+      }
     };
 
-    ReactDOM.render(React.createElement(HydrodynamicSimulation), document.getElementById('root'));
+    const updateGrid = () => {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        for (let y = 0; y < GRID_SIZE; y++) {
+          grid[x][y] += (Math.random() - 0.5) * 10;
+        }
+      }
+    };
+
+    const animate = () => {
+      updateGrid();
+      drawGrid();
+      requestAnimationFrame(animate);
+    };
+
+    animate();
   </script>
 </body>
 </html>
