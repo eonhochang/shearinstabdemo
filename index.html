@@ -2,57 +2,96 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Simple 2D Fluid Simulation</title>
+  <title>Stable Fluids 2D Demo</title>
 </head>
 <body>
-  <canvas id="simulation" width="800" height="600"></canvas>
+  <canvas id="simulation" width="400" height="400"></canvas>
   <script>
     const canvas = document.getElementById('simulation');
     const ctx = canvas.getContext('2d');
-    const WIDTH = canvas.width;
-    const HEIGHT = canvas.height;
-    const GRID_SIZE = 100;
+    const N = 64;
+    const SIZE = 400;
+    const dt = 0.1;
 
-    const createGrid = () => {
-      const grid = [];
-      for (let x = 0; x < GRID_SIZE; x++) {
-        grid[x] = [];
-        for (let y = 0; y < GRID_SIZE; y++) {
-          grid[x][y] = Math.random() * 255;
+    const grid = new Float32Array(N * N);
+    const grid_prev = new Float32Array(N * N);
+    const velocityX = new Float32Array(N * N);
+    const velocityY = new Float32Array(N * N);
+
+    const IX = (x, y) => x + y * N;
+
+    const clearGrid = (grid) => {
+      for (let i = 0; i < N * N; i++) grid[i] = 0;
+    };
+
+    const addDensity = (x, y, amount) => {
+      const index = IX(x, y);
+      grid[index] += amount;
+    };
+
+    const addVelocity = (x, y, amountX, amountY) => {
+      const index = IX(x, y);
+      velocityX[index] += amountX;
+      velocityY[index] += amountY;
+    };
+
+    const advect = () => {
+      for (let i = 1; i < N - 1; i++) {
+        for (let j = 1; j < N - 1; j++) {
+          let x = i - dt * velocityX[IX(i, j)];
+          let y = j - dt * velocityY[IX(i, j)];
+
+          x = Math.max(0.5, Math.min(N - 1.5, x));
+          y = Math.max(0.5, Math.min(N - 1.5, y));
+
+          const i0 = Math.floor(x);
+          const i1 = i0 + 1;
+          const j0 = Math.floor(y);
+          const j1 = j0 + 1;
+
+          const s1 = x - i0;
+          const s0 = 1 - s1;
+          const t1 = y - j0;
+          const t0 = 1 - t1;
+
+          grid[IX(i, j)] =
+            s0 * (t0 * grid_prev[IX(i0, j0)] + t1 * grid_prev[IX(i0, j1)]) +
+            s1 * (t0 * grid_prev[IX(i1, j0)] + t1 * grid_prev[IX(i1, j1)]);
         }
       }
-      return grid;
     };
 
-    let grid = createGrid();
-
-    const drawGrid = () => {
-      const cellWidth = WIDTH / GRID_SIZE;
-      const cellHeight = HEIGHT / GRID_SIZE;
-      for (let x = 0; x < GRID_SIZE; x++) {
-        for (let y = 0; y < GRID_SIZE; y++) {
-          const val = grid[x][y];
-          ctx.fillStyle = `rgb(${val},${val},255)`;
-          ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
+    const draw = () => {
+      const cellSize = SIZE / N;
+      ctx.clearRect(0, 0, SIZE, SIZE);
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          const d = grid[IX(i, j)];
+          ctx.fillStyle = `rgb(${d}, ${d}, ${255})`;
+          ctx.fillRect(i * cellSize, j * cellSize, cellSize, cellSize);
         }
       }
     };
 
-    const updateGrid = () => {
-      for (let x = 0; x < GRID_SIZE; x++) {
-        for (let y = 0; y < GRID_SIZE; y++) {
-          grid[x][y] += (Math.random() - 0.5) * 10;
-        }
+    const simulate = () => {
+      grid_prev.set(grid);
+      advect();
+      draw();
+      requestAnimationFrame(simulate);
+    };
+
+    clearGrid(grid);
+    clearGrid(grid_prev);
+
+    // Initialize with a blob of density in the center
+    for (let i = 30; i < 34; i++) {
+      for (let j = 30; j < 34; j++) {
+        addDensity(i, j, 255);
+        addVelocity(i, j, 0.5, 0);
       }
-    };
+    }
 
-    const animate = () => {
-      updateGrid();
-      drawGrid();
-      requestAnimationFrame(animate);
-    };
-
-    animate();
+    simulate();
   </script>
 </body>
 </html>
