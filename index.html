@@ -1,98 +1,233 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Stable Fluids 2D Demo</title>
-</head>
-<body>
-  <canvas id="simulation" width="400" height="400"></canvas>
-  <script>
-    const canvas = document.getElementById('simulation');
-    const ctx = canvas.getContext('2d');
-    const N = 64;
-    const SIZE = 400;
-    const dt = 0.1;
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Stable Fluids in JavaScript Demo</title>
+    <style>
+      canvas { border: 1px solid #333; }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas" width="512" height="512"></canvas>
+    <script>
+      // Simulation parameters
+      const N = 64;                    // Grid resolution (interior cells)
+      const size = (N + 2) * (N + 2);    // Total cells (including boundaries)
+      const dt = 0.1;                  // Time step
+      const diff = 0.0001;             // Diffusion rate (for density)
+      const visc = 0.0001;             // Viscosity (for velocity)
 
-    const grid = new Float32Array(N * N);
-    const grid_prev = new Float32Array(N * N);
-    const velocityX = new Float32Array(N * N);
-    const velocityY = new Float32Array(N * N);
+      // Fluid arrays (each is a 1D array of length "size")
+      let u = new Float32Array(size),      // x-velocity
+          v = new Float32Array(size),      // y-velocity
+          u_prev = new Float32Array(size), // previous x-velocity (source)
+          v_prev = new Float32Array(size), // previous y-velocity (source)
+          density = new Float32Array(size),       // density field
+          density_prev = new Float32Array(size);  // density sources
 
-    const IX = (x, y) => x + y * N;
+      // Helper: Map 2D grid indices (i,j) to 1D array index.
+      function IX(i, j) {
+        return i + (N + 2) * j;
+      }
 
-    const clearGrid = (grid) => {
-      for (let i = 0; i < N * N; i++) grid[i] = 0;
-    };
-
-    const addDensity = (x, y, amount) => {
-      const index = IX(x, y);
-      grid[index] += amount;
-    };
-
-    const addVelocity = (x, y, amountX, amountY) => {
-      const index = IX(x, y);
-      velocityX[index] += amountX;
-      velocityY[index] += amountY;
-    };
-
-    const advect = () => {
-      for (let i = 0; i < N * N; i++) grid_prev[i] = grid[i];
-      
-      for (let i = 1; i < N - 1; i++) {
-        for (let j = 1; j < N - 1; j++) {
-          let x = i - dt * velocityX[IX(i, j)];
-          let y = j - dt * velocityY[IX(i, j)];
-
-          x = Math.max(0.5, Math.min(N - 1.5, x));
-          y = Math.max(0.5, Math.min(N - 1.5, y));
-
-          const i0 = Math.floor(x);
-          const i1 = i0 + 1;
-          const j0 = Math.floor(y);
-          const j1 = j0 + 1;
-
-          const s1 = x - i0;
-          const s0 = 1 - s1;
-          const t1 = y - j0;
-          const t0 = 1 - t1;
-
-          grid[IX(i, j)] =
-            s0 * (t0 * grid_prev[IX(i0, j0)] + t1 * grid_prev[IX(i0, j1)]) +
-            s1 * (t0 * grid_prev[IX(i1, j0)] + t1 * grid_prev[IX(i1, j1)]);
+      // Add sources: x += dt * s for every cell.
+      function addSource(x, s, dt) {
+        for (let i = 0; i < x.length; i++) {
+          x[i] += dt * s[i];
         }
       }
-    };
 
-    const draw = () => {
-      const cellSize = SIZE / N;
-      ctx.clearRect(0, 0, SIZE, SIZE);
-      for (let i = 0; i < N; i++) {
-        for (let j = 0; j < N; j++) {
-          const d = grid[IX(i, j)];
-          ctx.fillStyle = `rgb(${d}, ${d}, ${255})`;
-          ctx.fillRect(i * cellSize, j * cellSize, cellSize, cellSize);
+      // Set boundary conditions.
+      // b = 0 for scalar fields, 1 for horizontal velocities, 2 for vertical velocities.
+      function set_bnd(b, x) {
+        for (let i = 1; i <= N; i++) {
+          x[IX(0, i)] = b === 1 ? -x[IX(1, i)] : x[IX(1, i)];
+          x[IX(N + 1, i)] = b === 1 ? -x[IX(N, i)] : x[IX(N, i)];
+          x[IX(i, 0)] = b === 2 ? -x[IX(i, 1)] : x[IX(i, 1)];
+          x[IX(i, N + 1)] = b === 2 ? -x[IX(i, N)] : x[IX(i, N)];
+        }
+        x[IX(0, 0)] = 0.5 * (x[IX(1, 0)] + x[IX(0, 1)]);
+        x[IX(0, N + 1)] = 0.5 * (x[IX(1, N + 1)] + x[IX(0, N)]);
+        x[IX(N + 1, 0)] = 0.5 * (x[IX(N, 0)] + x[IX(N + 1, 1)]);
+        x[IX(N + 1, N + 1)] = 0.5 * (x[IX(N, N + 1)] + x[IX(N + 1, N)]);
+      }
+
+      // Diffuse step: solves
+      //    x = x0 + a (neighbors sum)  with a = dt*diff*N*N
+      // using 20 iterations of Gauss-Seidel relaxation.
+      function diffuse(b, x, x0, diff, dt) {
+        let a = dt * diff * N * N;
+        for (let k = 0; k < 20; k++) {
+          for (let i = 1; i <= N; i++) {
+            for (let j = 1; j <= N; j++) {
+              x[IX(i, j)] = (x0[IX(i, j)] +
+                a * (x[IX(i - 1, j)] + x[IX(i + 1, j)] +
+                     x[IX(i, j - 1)] + x[IX(i, j + 1)])) / (1 + 4 * a);
+            }
+          }
+          set_bnd(b, x);
         }
       }
-    };
 
-    const simulate = () => {
-      advect();
-      draw();
-      requestAnimationFrame(simulate);
-    };
-
-    clearGrid(grid);
-    clearGrid(grid_prev);
-
-    // Initialize with a blob of density in the center
-    for (let i = 30; i < 34; i++) {
-      for (let j = 30; j < 34; j++) {
-        addDensity(i, j, 255);
-        addVelocity(i, j, 0.5, 0);
+      // Advect step: moves quantities along the velocity field.
+      // For each cell, we backtrace by dt*N and bilinearly interpolate.
+      function advect(b, d, d0, u, v, dt) {
+        let i0, j0, i1, j1;
+        let x, y, s0, s1, t0, t1;
+        let dt0 = dt * N;
+        for (let i = 1; i <= N; i++) {
+          for (let j = 1; j <= N; j++) {
+            x = i - dt0 * u[IX(i, j)];
+            y = j - dt0 * v[IX(i, j)];
+            if (x < 0.5) x = 0.5;
+            if (x > N + 0.5) x = N + 0.5;
+            i0 = Math.floor(x);
+            i1 = i0 + 1;
+            if (y < 0.5) y = 0.5;
+            if (y > N + 0.5) y = N + 0.5;
+            j0 = Math.floor(y);
+            j1 = j0 + 1;
+            s1 = x - i0;
+            s0 = 1 - s1;
+            t1 = y - j0;
+            t0 = 1 - t1;
+            d[IX(i, j)] = s0 * (t0 * d0[IX(i0, j0)] + t1 * d0[IX(i0, j1)]) +
+                          s1 * (t0 * d0[IX(i1, j0)] + t1 * d0[IX(i1, j1)]);
+          }
+        }
+        set_bnd(b, d);
       }
-    }
 
-    simulate();
-  </script>
-</body>
+      // Project step: makes the velocity field divergence-free.
+      // First computes the divergence and then solves for a pressure field p.
+      function project(u, v, p, div) {
+        for (let i = 1; i <= N; i++) {
+          for (let j = 1; j <= N; j++) {
+            div[IX(i, j)] = -0.5 * (
+              u[IX(i + 1, j)] - u[IX(i - 1, j)] +
+              v[IX(i, j + 1)] - v[IX(i, j - 1)]
+            ) / N;
+            p[IX(i, j)] = 0;
+          }
+        }
+        set_bnd(0, div);
+        set_bnd(0, p);
+        for (let k = 0; k < 20; k++) {
+          for (let i = 1; i <= N; i++) {
+            for (let j = 1; j <= N; j++) {
+              p[IX(i, j)] = (div[IX(i, j)] +
+                p[IX(i - 1, j)] + p[IX(i + 1, j)] +
+                p[IX(i, j - 1)] + p[IX(i, j + 1)]
+              ) / 4;
+            }
+          }
+          set_bnd(0, p);
+        }
+        for (let i = 1; i <= N; i++) {
+          for (let j = 1; j <= N; j++) {
+            u[IX(i, j)] -= 0.5 * N * (p[IX(i + 1, j)] - p[IX(i - 1, j)]);
+            v[IX(i, j)] -= 0.5 * N * (p[IX(i, j + 1)] - p[IX(i, j - 1)]);
+          }
+        }
+        set_bnd(1, u);
+        set_bnd(2, v);
+      }
+
+      // Velocity step: update velocity fields using source addition, diffusion, advection, and projection.
+      function velStep(u, v, u0, v0, visc, dt) {
+        addSource(u, u0, dt);
+        addSource(v, v0, dt);
+        
+        // Swap u and u0, then diffuse.
+        let temp = u0;
+        u0 = u; 
+        u = temp;
+        diffuse(1, u, u0, visc, dt);
+
+        temp = v0;
+        v0 = v;
+        v = temp;
+        diffuse(2, v, v0, visc, dt);
+
+        // Create temporary arrays for pressure and divergence.
+        let p = new Float32Array(size);
+        let div = new Float32Array(size);
+        project(u, v, p, div);
+
+        // Swap again and advect.
+        temp = u0;
+        u0 = u;
+        u = temp;
+        temp = v0;
+        v0 = v;
+        v = temp;
+        advect(1, u, u0, u0, v0, dt);
+        advect(2, v, v0, u0, v0, dt);
+        project(u, v, p, div);
+      }
+
+      // Density step: update density field using source addition, diffusion, and advection.
+      function densStep(x, x0, u, v, diff, dt) {
+        addSource(x, x0, dt);
+        let temp = x0;
+        x0 = x;
+        x = temp;
+        diffuse(0, x, x0, diff, dt);
+        temp = x0;
+        x0 = x;
+        x = temp;
+        advect(0, x, x0, u, v, dt);
+      }
+
+      // The main simulation step.
+      function fluidStep() {
+        // Update velocities.
+        velStep(u, v, u_prev, v_prev, visc, dt);
+        // Update density.
+        densStep(density, density_prev, u, v, diff, dt);
+        // Clear the source arrays after each step.
+        u_prev.fill(0);
+        v_prev.fill(0);
+        density_prev.fill(0);
+      }
+
+      // Rendering: map the density field to canvas pixels.
+      function renderDens() {
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const cellWidth = canvas.width / N;
+        const cellHeight = canvas.height / N;
+        
+        // For each grid cell (excluding boundaries), fill a rectangle with the density value.
+        for (let i = 1; i <= N; i++) {
+          for (let j = 1; j <= N; j++) {
+            let d = density[IX(i, j)];
+            let color = Math.min(255, Math.floor(d * 255));
+            let x = Math.floor((i - 1) * cellWidth);
+            let y = Math.floor((j - 1) * cellHeight);
+            ctx.fillStyle = `rgb(${color}, ${color}, ${color})`;
+            ctx.fillRect(x, y, cellWidth, cellHeight);
+          }
+        }
+      }
+
+      // Main update loop.
+      function update() {
+        // For demo purposes: add density and a random velocity at the center each frame.
+        const center = IX(Math.floor(N / 2), Math.floor(N / 2));
+        density_prev[center] = 100;           // Inject density
+        u_prev[center] = Math.random() * 50 - 25; // Random x-force
+        v_prev[center] = Math.random() * 50 - 25; // Random y-force
+
+        fluidStep();
+        renderDens();
+        requestAnimationFrame(update);
+      }
+
+      // Start the simulation.
+      update();
+    </script>
+  </body>
 </html>
