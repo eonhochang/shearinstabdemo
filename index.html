@@ -36,6 +36,8 @@
     };
 
     const advect = () => {
+      for (let i = 0; i < N * N; i++) grid_prev[i] = grid[i];
+      
       for (let i = 1; i < N - 1; i++) {
         for (let j = 1; j < N - 1; j++) {
           let x = i - dt * velocityX[IX(i, j)];
@@ -74,7 +76,6 @@
     };
 
     const simulate = () => {
-      grid_prev.set(grid);
       advect();
       draw();
       requestAnimationFrame(simulate);
